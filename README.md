@@ -2,6 +2,12 @@
 
 在浏览器里把"底图 + 小 Logo"合成一张图标。本地合成，零后端，数据不出浏览器。
 
+<p align="center">
+  <img src="docs/screenshots/主页.png" width="800" alt="IconForge 主页" />
+  <br/>
+  <img src="docs/screenshots/高级设置.png" width="800" alt="IconForge 高级设置" />
+</p>
+
 ## 特性
 
 - 🎯 **两槽合成**：选一张底图，叠一个 Logo，立刻预览 → 下载 PNG
