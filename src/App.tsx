@@ -31,6 +31,7 @@ type LibraryImage = {
 type SourceFilter = "all" | "recent" | "favorite" | "user" | "dashboard" | "lobe"
 type CornerKey = "top-left" | "top-right" | "bottom-left" | "bottom-right"
 type SlotKey = "base" | "badge"
+type BaseShape = "square" | "rounded" | "circle"
 type DashboardIconMeta = {
   base?: "svg" | "png" | "webp"
   aliases?: string[]
@@ -83,20 +84,20 @@ type Scene = {
   label: string
   desc: string
   outputSize: number
-  roundedBase: boolean
+  baseShape: BaseShape
   badgeRing: boolean
   badgeScale: number
 }
 
 const scenes: Scene[] = [
-  { id: "app",     label: "应用图标",     desc: "1024 圆角",  outputSize: 1024, roundedBase: true,  badgeRing: true,  badgeScale: 30 },
-  { id: "favicon", label: "网站 Favicon", desc: "512 方形",   outputSize: 512,  roundedBase: false, badgeRing: false, badgeScale: 38 },
-  { id: "dock",    label: "Dock 图标",    desc: "1024 方形",  outputSize: 1024, roundedBase: false, badgeRing: true,  badgeScale: 26 },
+  { id: "app",     label: "应用图标",     desc: "1024 圆角",  outputSize: 1024, baseShape: "rounded", badgeRing: false,  badgeScale: 20 },
+  { id: "favicon", label: "网站 Favicon", desc: "512 方形",   outputSize: 512,  baseShape: "square",  badgeRing: false, badgeScale: 38 },
+  { id: "dock",    label: "Dock 图标",    desc: "1024 方形",  outputSize: 1024, baseShape: "square",  badgeRing: false,  badgeScale: 26 },
 ]
 
 const STORAGE_KEY = "iconforge.v1"
 const DEFAULT_BADGE_POS = { x: 100, y: 100 }
-const DEFAULT_BADGE_SCALE = 30
+const DEFAULT_BADGE_SCALE = 20
 
 type Persisted = {
   baseId?: string
@@ -104,6 +105,7 @@ type Persisted = {
   badgeScale?: number
   badgePos?: { x: number; y: number }
   outputSize?: number
+  baseShape?: BaseShape
   roundedBase?: boolean
   badgeRing?: boolean
   favorites?: string[]
@@ -147,8 +149,8 @@ function App() {
   const [outputSize, setOutputSize] = useState(persisted.outputSize ?? 1024)
   const [badgeScale, setBadgeScale] = useState(persisted.badgeScale ?? DEFAULT_BADGE_SCALE)
   const [badgePos, setBadgePos] = useState<{ x: number; y: number }>(persisted.badgePos ?? DEFAULT_BADGE_POS)
-  const [roundedBase, setRoundedBase] = useState(persisted.roundedBase ?? true)
-  const [badgeRing, setBadgeRing] = useState(persisted.badgeRing ?? true)
+  const [baseShape, setBaseShape] = useState<BaseShape>(persisted.baseShape ?? (persisted.roundedBase === false ? "square" : "rounded"))
+  const [badgeRing, setBadgeRing] = useState(persisted.badgeRing ?? false)
 
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [downloadUrl, setDownloadUrl] = useState("")
@@ -219,7 +221,7 @@ function App() {
   useEffect(() => {
     if (typeof localStorage === "undefined") return
     const data: Persisted = {
-      baseId, badgeId, badgeScale, badgePos, outputSize, roundedBase, badgeRing, favorites, recentIds,
+      baseId, badgeId, badgeScale, badgePos, outputSize, baseShape, badgeRing, favorites, recentIds,
       urlLibrary: library.filter((i) => i.kind === "url"),
     }
     try {
@@ -227,7 +229,12 @@ function App() {
     } catch {
       /* quota etc. */
     }
-  }, [baseId, badgeId, badgeScale, badgePos, outputSize, roundedBase, badgeRing, favorites, recentIds, library])
+  }, [baseId, badgeId, badgeScale, badgePos, outputSize, baseShape, badgeRing, favorites, recentIds, library])
+
+  // Clamp badge position when shape/scale changes
+  useEffect(() => {
+    setBadgePos((prev) => clampToCircle(prev))
+  }, [baseShape, badgeScale])
 
   // Render
   useEffect(() => {
@@ -249,13 +256,18 @@ function App() {
       try {
         const base = await loadImage(baseImage.src, baseImage.srcFallback)
         if (cancelled) return
+
         ctx.save()
-        if (roundedBase) {
+        if (baseShape === "circle") {
+          ctx.beginPath()
+          ctx.arc(outputSize / 2, outputSize / 2, outputSize / 2, 0, Math.PI * 2)
+          ctx.clip()
+        } else if (baseShape === "rounded") {
           roundedRect(ctx, 0, 0, outputSize, outputSize, Math.round(outputSize * 0.2))
           ctx.clip()
         }
+
         drawContain(ctx, base, 0, 0, outputSize, outputSize)
-        ctx.restore()
 
         if (badgeImage) {
           const badge = await loadImage(badgeImage.src, badgeImage.srcFallback)
@@ -283,6 +295,8 @@ function App() {
           ctx.restore()
         }
 
+        ctx.restore()
+
         setDownloadUrl(canvas.toDataURL("image/png"))
       } catch {
         setRenderError("图片可能禁止跨域读取，请换一个支持跨域的图片地址，或先下载后上传。")
@@ -293,7 +307,7 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [baseImage, badgeImage, badgePos, badgeRing, badgeScale, outputSize, roundedBase])
+  }, [baseImage, badgeImage, badgePos, badgeRing, badgeScale, outputSize, baseShape])
 
   function pushRecent(id: string) {
     setRecentIds((prev) => [id, ...prev.filter((x) => x !== id)].slice(0, RECENTS_LIMIT))
@@ -323,17 +337,17 @@ function App() {
 
   function applyScene(s: Scene) {
     setOutputSize(s.outputSize)
-    setRoundedBase(s.roundedBase)
+    setBaseShape(s.baseShape)
     setBadgeRing(s.badgeRing)
     setBadgeScale(s.badgeScale)
   }
 
   function reset() {
     setBadgeScale(DEFAULT_BADGE_SCALE)
-    setBadgePos(DEFAULT_BADGE_POS)
+    setBadgePos(clampToCircle(DEFAULT_BADGE_POS))
     setOutputSize(1024)
-    setRoundedBase(true)
-    setBadgeRing(true)
+    setBaseShape("rounded")
+    setBadgeRing(false)
   }
 
   function addUpload(event: ChangeEvent<HTMLInputElement>) {
@@ -393,6 +407,18 @@ function App() {
   }
 
   // Canvas drag
+  function clampToCircle(pos: { x: number; y: number }): { x: number; y: number } {
+    if (baseShape !== "circle") return pos
+    const cx = 50, cy = 50
+    const maxR = 50 - badgeScale / 2
+    if (maxR <= 0) return { x: 50, y: 50 }
+    const dx = pos.x - cx, dy = pos.y - cy
+    const dist = Math.sqrt(dx * dx + dy * dy)
+    if (dist <= maxR) return pos
+    const s = maxR / dist
+    return { x: cx + dx * s, y: cy + dy * s }
+  }
+
   function applyCanvasPointer(event: ReactPointerEvent<HTMLCanvasElement>) {
     if (!canvasRef.current) return
     const rect = canvasRef.current.getBoundingClientRect()
@@ -406,7 +432,7 @@ function App() {
     const tly = py - sizePct / 2
     const nx = Math.max(0, Math.min(100, (tlx / range) * 100))
     const ny = Math.max(0, Math.min(100, (tly / range) * 100))
-    setBadgePos({ x: nx, y: ny })
+    setBadgePos(clampToCircle({ x: nx, y: ny }))
   }
   function onCanvasPointerDown(e: ReactPointerEvent<HTMLCanvasElement>) {
     if (!baseImage || !badgeImage) return
@@ -493,9 +519,9 @@ function App() {
 
   const activeSceneId = useMemo(() => {
     return scenes.find((s) =>
-      s.outputSize === outputSize && s.roundedBase === roundedBase && s.badgeRing === badgeRing,
+      s.outputSize === outputSize && s.baseShape === baseShape && s.badgeRing === badgeRing,
     )?.id
-  }, [outputSize, roundedBase, badgeRing])
+  }, [outputSize, baseShape, badgeRing])
 
   return (
     <main className="min-h-screen bg-[linear-gradient(180deg,#f8fafc_0%,#eef2f7_54%,#f8fafc_100%)] text-foreground">
@@ -753,11 +779,14 @@ function App() {
                 onMouseEnter={() => setHoverCanvas(true)}
                 onMouseLeave={() => setHoverCanvas(false)}
               >
-                <div className="absolute inset-0 rounded-xl border border-dashed border-slate-300 bg-[conic-gradient(from_90deg_at_1px_1px,#e2e8f0_90deg,transparent_0)_0_0/22px_22px]" />
+                <div className={cn("absolute inset-0", baseShape === "circle" ? "rounded-full" : "rounded-xl")} style={baseShape === "circle" ? { clipPath: "circle(50%)" } : undefined}>
+                  <div className="absolute inset-0 rounded-xl border border-dashed border-slate-300 bg-[conic-gradient(from_90deg_at_1px_1px,#e2e8f0_90deg,transparent_0)_0_0/22px_22px]" />
+                </div>
                 <canvas
                   ref={canvasRef}
                   className={cn(
-                    "relative h-full w-full touch-none rounded-xl object-contain shadow-lg",
+                    "relative h-full w-full touch-none object-contain shadow-lg",
+                    baseShape === "circle" ? "rounded-full" : "rounded-xl",
                     baseImage && badgeImage ? (isDragging ? "cursor-grabbing" : "cursor-grab") : "cursor-default",
                   )}
                   onPointerDown={onCanvasPointerDown}
@@ -817,14 +846,37 @@ function App() {
                       const p = cornerPresets[c]
                       const active = Math.round(badgePos.x) === p.x && Math.round(badgePos.y) === p.y
                       return (
-                        <Button key={c} variant={active ? "default" : "outline"} size="sm" onClick={() => setBadgePos(p)}>
+                        <Button key={c} variant={active ? "default" : "outline"} size="sm" onClick={() => setBadgePos(clampToCircle(p))}>
                           {cornerLabels[c]}
                         </Button>
                       )
                     })}
                   </div>
                 </div>
-                <ToggleRow label="底图圆角（iOS 风）" value={roundedBase} onChange={setRoundedBase} />
+                <div className="grid gap-2">
+                  <span className="text-sm font-medium text-slate-700">底图形状</span>
+                  <div className="flex gap-1.5">
+                    {([
+                      { key: "square", label: "方形" },
+                      { key: "rounded", label: "圆角" },
+                      { key: "circle", label: "圆形" },
+                    ] as const).map((opt) => (
+                      <button
+                        key={opt.key}
+                        type="button"
+                        onClick={() => setBaseShape(opt.key)}
+                        className={cn(
+                          "rounded-md border px-2.5 py-1 text-xs font-medium transition",
+                          baseShape === opt.key
+                            ? "border-slate-950 bg-slate-950 text-white"
+                            : "border-input bg-white text-slate-600 hover:border-slate-400",
+                        )}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <ToggleRow label="Logo 白底托盘" value={badgeRing} onChange={setBadgeRing} />
                 <Button variant="outline" size="sm" onClick={reset}>
                   <RotateCcw className="h-4 w-4" />
@@ -1010,7 +1062,7 @@ function NumberControl({
             max={max}
             step={step}
             onChange={(e) => onChange(clamp(Number(e.target.value)))}
-            className="w-16 rounded border border-input bg-background px-2 py-0.5 text-right text-sm tabular-nums outline-none focus:ring-2 focus:ring-ring"
+            className="w-20 rounded border border-input bg-background px-2 py-0.5 text-right text-sm tabular-nums outline-none focus:ring-2 focus:ring-ring"
           />
           <span className="text-xs text-muted-foreground">{unit}</span>
         </div>
