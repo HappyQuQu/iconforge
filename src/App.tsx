@@ -17,6 +17,8 @@ import {
 } from "lucide-react"
 
 import { Button } from "./components/ui/button"
+import { VisitCount } from "./components/VisitCount"
+import { trackEvent } from "./lib/analytics"
 import { cn } from "./lib/utils"
 
 type IconKind = "upload" | "url" | "dashboard" | "lobe"
@@ -404,6 +406,7 @@ function App() {
     a.download = `${baseImage?.name ?? "icon"}${badgeImage ? `-${badgeImage.name}` : ""}-${outputSize}.png`
     a.href = downloadUrl
     a.click()
+    trackEvent("download", { size: outputSize })
   }
 
   // Canvas drag
@@ -910,6 +913,7 @@ function App() {
             </a>
             {" "}两个开源项目提供海量高质量图标，本工具仅在浏览器内合成，不会向后端上传任何图片。
           </p>
+          <VisitCount />
         </footer>
       </div>
 
