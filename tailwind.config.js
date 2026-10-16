@@ -10,6 +10,8 @@ export default {
         ring: "hsl(var(--ring))",
         background: "hsl(var(--background))",
         foreground: "hsl(var(--foreground))",
+        surface: "hsl(var(--surface) / <alpha-value>)",
+        "icon-well": "hsl(var(--icon-well))",
         primary: {
           DEFAULT: "hsl(var(--primary))",
           foreground: "hsl(var(--primary-foreground))",
@@ -37,7 +39,7 @@ export default {
         sm: "calc(var(--radius) - 4px)",
       },
       boxShadow: {
-        soft: "0 18px 60px rgba(15, 23, 42, 0.09)",
+        soft: "0 18px 60px var(--shadow-soft)",
       },
     },
   },

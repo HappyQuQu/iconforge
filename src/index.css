@@ -6,6 +6,11 @@
   :root {
     --background: 210 40% 98%;
     --foreground: 222 47% 11%;
+    --surface: 0 0% 100%;
+    --icon-well: 210 40% 98%;
+    --page-middle: 215 36% 95%;
+    --checker: 214 32% 91%;
+    --shadow-soft: rgb(15 23 42 / 0.09);
     --primary: 222 47% 11%;
     --primary-foreground: 0 0% 100%;
     --secondary: 155 45% 92%;
@@ -22,6 +27,28 @@
     --radius: 0.5rem;
   }
 
+  :root.dark {
+    --background: 222 40% 8%;
+    --foreground: 210 40% 96%;
+    --surface: 222 30% 12%;
+    --icon-well: 214 20% 88%;
+    --page-middle: 222 35% 11%;
+    --checker: 217 24% 20%;
+    --shadow-soft: rgb(0 0 0 / 0.2);
+    --primary: 210 40% 96%;
+    --primary-foreground: 222 47% 11%;
+    --secondary: 157 30% 19%;
+    --secondary-foreground: 153 55% 80%;
+    --muted: 217 25% 18%;
+    --muted-foreground: 215 20% 68%;
+    --accent: 210 35% 22%;
+    --accent-foreground: 204 85% 85%;
+    --destructive: 0 63% 45%;
+    --border: 217 24% 24%;
+    --input: 217 24% 28%;
+    --ring: 213 90% 72%;
+  }
+
   * {
     @apply border-border;
   }
@@ -36,7 +63,20 @@
   }
 
   button,
-  input {
+  input,
+  select {
     font: inherit;
+  }
+}
+
+@layer components {
+  .app-background {
+    background: linear-gradient(180deg, hsl(var(--background)) 0%, hsl(var(--page-middle)) 54%, hsl(var(--background)) 100%);
+  }
+
+  .canvas-checker {
+    background-color: hsl(var(--surface));
+    background-image: conic-gradient(from 90deg at 1px 1px, hsl(var(--checker)) 90deg, transparent 0);
+    background-size: 22px 22px;
   }
 }

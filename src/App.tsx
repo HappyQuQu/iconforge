@@ -17,6 +17,7 @@ import {
 } from "lucide-react"
 
 import { Button } from "./components/ui/button"
+import { ThemeSwitcher } from "./components/ThemeSwitcher"
 import { VisitCount } from "./components/VisitCount"
 import { trackEvent } from "./lib/analytics"
 import { cn } from "./lib/utils"
@@ -126,15 +127,21 @@ function loadPersisted(): Persisted {
 }
 
 function App() {
-  const persistedRef = useRef<Persisted>(loadPersisted())
-  const persisted = persistedRef.current
+  const [persisted] = useState(loadPersisted)
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const selectionTouchedRef = useRef(false)
 
   const [library, setLibrary] = useState<LibraryImage[]>(persisted.urlLibrary ?? [])
   const [dashboardIcons, setDashboardIcons] = useState<LibraryImage[]>([])
-  const [lobeIcons, setLobeIcons] = useState<LibraryImage[]>([])
+  const [lobeIcons] = useState<LibraryImage[]>(() => lobeIconSlugs.map((slug) => ({
+    id: `lobe-${slug}`,
+    name: lobeNameOverrides[slug] ?? titleFromSlug(slug),
+    src: `${lobeIconsCdnBase}/${slug}-color.svg`,
+    srcFallback: `${lobeIconsCdnBase}/${slug}.svg`,
+    kind: "lobe",
+  })))
   const [favorites, setFavorites] = useState<string[]>(persisted.favorites ?? [])
   const [recentIds, setRecentIds] = useState<string[]>(persisted.recentIds ?? [])
 
@@ -150,8 +157,9 @@ function App() {
   const [badgeId, setBadgeId] = useState(persisted.badgeId ?? "")
   const [outputSize, setOutputSize] = useState(persisted.outputSize ?? 1024)
   const [badgeScale, setBadgeScale] = useState(persisted.badgeScale ?? DEFAULT_BADGE_SCALE)
-  const [badgePos, setBadgePos] = useState<{ x: number; y: number }>(persisted.badgePos ?? DEFAULT_BADGE_POS)
+  const [storedBadgePos, setBadgePos] = useState<{ x: number; y: number }>(persisted.badgePos ?? DEFAULT_BADGE_POS)
   const [baseShape, setBaseShape] = useState<BaseShape>(persisted.baseShape ?? (persisted.roundedBase === false ? "square" : "rounded"))
+  const badgePos = useMemo(() => clampBadgePosition(storedBadgePos, baseShape, badgeScale), [storedBadgePos, baseShape, badgeScale])
   const [badgeRing, setBadgeRing] = useState(persisted.badgeRing ?? false)
 
   const [advancedOpen, setAdvancedOpen] = useState(false)
@@ -186,6 +194,13 @@ function App() {
           })
           .sort((a, b) => a.name.localeCompare(b.name))
         setDashboardIcons(icons)
+        if (!persisted.baseId && !persisted.badgeId && !selectionTouchedRef.current) {
+          const pick = (name: string) => icons.find((i) => i.id === `dashboard-${name}`)
+          const base = pick("docker") ?? pick("github") ?? icons[0]
+          const badge = pick("claude") ?? pick("openai") ?? icons.find((i) => i.id !== base?.id)
+          if (base) setBaseId((current) => current || base.id)
+          if (badge) setBadgeId((current) => current || badge.id)
+        }
       } catch {
         /* ignore */
       }
@@ -194,30 +209,7 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [])
-
-  // Lobe load
-  useEffect(() => {
-    const icons = lobeIconSlugs.map((slug) => ({
-      id: `lobe-${slug}`,
-      name: lobeNameOverrides[slug] ?? titleFromSlug(slug),
-      src: `${lobeIconsCdnBase}/${slug}-color.svg`,
-      srcFallback: `${lobeIconsCdnBase}/${slug}.svg`,
-      kind: "lobe" as const,
-    }))
-    setLobeIcons(icons)
-  }, [])
-
-  // Defaults: only if no persisted base/badge
-  useEffect(() => {
-    if (baseId || badgeId) return
-    if (dashboardIcons.length === 0) return
-    const pick = (name: string) => dashboardIcons.find((i) => i.id === `dashboard-${name}`)
-    const fb = pick("docker") ?? pick("github") ?? dashboardIcons[0]
-    const fd = pick("claude") ?? pick("openai") ?? dashboardIcons.find((i) => i.id !== fb?.id) ?? dashboardIcons[1]
-    if (!baseId && fb) setBaseId(fb.id)
-    if (!badgeId && fd) setBadgeId(fd.id)
-  }, [baseId, badgeId, dashboardIcons])
+  }, [persisted])
 
   // Persist
   useEffect(() => {
@@ -232,11 +224,6 @@ function App() {
       /* quota etc. */
     }
   }, [baseId, badgeId, badgeScale, badgePos, outputSize, baseShape, badgeRing, favorites, recentIds, library])
-
-  // Clamp badge position when shape/scale changes
-  useEffect(() => {
-    setBadgePos((prev) => clampToCircle(prev))
-  }, [baseShape, badgeScale])
 
   // Render
   useEffect(() => {
@@ -316,6 +303,7 @@ function App() {
   }
 
   function selectImage(id: string) {
+    selectionTouchedRef.current = true
     if (activeSlot === "base") {
       setBaseId(id)
       if (!badgeId) setActiveSlot("badge")
@@ -327,10 +315,17 @@ function App() {
   }
 
   function dropToSlot(slot: SlotKey, id: string) {
+    selectionTouchedRef.current = true
     if (slot === "base") setBaseId(id)
     else setBadgeId(id)
     setActiveSlot(slot)
     pushRecent(id)
+  }
+
+  function clearSlot(slot: SlotKey) {
+    selectionTouchedRef.current = true
+    if (slot === "base") setBaseId("")
+    else setBadgeId("")
   }
 
   function toggleFavorite(id: string) {
@@ -411,15 +406,7 @@ function App() {
 
   // Canvas drag
   function clampToCircle(pos: { x: number; y: number }): { x: number; y: number } {
-    if (baseShape !== "circle") return pos
-    const cx = 50, cy = 50
-    const maxR = 50 - badgeScale / 2
-    if (maxR <= 0) return { x: 50, y: 50 }
-    const dx = pos.x - cx, dy = pos.y - cy
-    const dist = Math.sqrt(dx * dx + dy * dy)
-    if (dist <= maxR) return pos
-    const s = maxR / dist
-    return { x: cx + dx * s, y: cy + dy * s }
+    return clampBadgePosition(pos, baseShape, badgeScale)
   }
 
   function applyCanvasPointer(event: ReactPointerEvent<HTMLCanvasElement>) {
@@ -527,25 +514,26 @@ function App() {
   }, [outputSize, baseShape, badgeRing])
 
   return (
-    <main className="min-h-screen bg-[linear-gradient(180deg,#f8fafc_0%,#eef2f7_54%,#f8fafc_100%)] text-foreground">
+    <main className="min-h-screen app-background text-foreground">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-4 py-5 pb-24 sm:px-6 lg:px-8">
-        <header className="flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
+        <header className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <div className="mb-1.5 inline-flex w-fit items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-800">
+            <div className="mb-1.5 inline-flex w-fit items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950 px-2 py-0.5 text-xs font-medium text-emerald-800 dark:text-emerald-300">
               <Sparkles className="h-3 w-3" />
               本地合成 · 数据不出浏览器
             </div>
-            <h1 className="text-2xl font-semibold tracking-tight text-slate-950 sm:text-3xl">
+            <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
               IconForge
               <span className="ml-2 align-middle text-base font-normal text-muted-foreground">合成你的图标</span>
             </h1>
             <p className="text-sm text-muted-foreground">先点右边任一卡槽 → 再点左边图标即可填入（也可拖拽 / Enter / ⌘1–9）</p>
           </div>
+          <ThemeSwitcher />
         </header>
 
         <div className="grid gap-5 lg:grid-cols-[minmax(420px,1fr)_minmax(440px,520px)]">
           {/* LEFT: Library */}
-          <div className="flex flex-col gap-3 rounded-xl border border-border bg-white p-4 shadow-soft">
+          <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4 shadow-soft">
             <div className="flex flex-wrap items-center gap-2">
               {(Object.keys(sourceLabels) as SourceFilter[]).map((k) => (
                 <button
@@ -555,8 +543,8 @@ function App() {
                   className={cn(
                     "rounded-md border px-2.5 py-1 text-xs font-medium transition",
                     sourceFilter === k
-                      ? "border-slate-950 bg-slate-950 text-white"
-                      : "border-input bg-white text-slate-600 hover:border-slate-400",
+                      ? "border-primary bg-primary text-primary-foreground"
+                      : "border-input bg-surface text-muted-foreground hover:border-primary/50",
                   )}
                 >
                   {sourceLabels[k]}
@@ -618,12 +606,12 @@ function App() {
             </div>
 
             <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span>正在填入 → <b className="text-slate-950">{activeSlot === "base" ? "底图" : "Logo"}</b></span>
+              <span>正在填入 → <b className="text-foreground">{activeSlot === "base" ? "底图" : "Logo"}</b></span>
               <span>显示 {visibleLibrary.length}</span>
             </div>
 
             {visibleLibrary.length === 0 ? (
-              <div className="grid place-items-center rounded-md border border-dashed border-slate-300 px-4 py-12 text-sm text-muted-foreground">
+              <div className="grid place-items-center rounded-md border border-dashed border-input px-4 py-12 text-sm text-muted-foreground">
                 {sourceFilter === "favorite" ? "还没有收藏图标。点星标添加。" : "没找到匹配图标。"}
               </div>
             ) : (
@@ -644,14 +632,14 @@ function App() {
                         e.dataTransfer.effectAllowed = "copy"
                       }}
                       className={cn(
-                        "group relative flex cursor-pointer flex-col overflow-hidden rounded-lg border bg-white transition hover:border-slate-400",
-                        (isBase || isBadge) && "border-slate-950 ring-2 ring-slate-950/10",
+                        "group relative flex cursor-pointer flex-col overflow-hidden rounded-lg border bg-surface transition hover:border-primary/50",
+                        (isBase || isBadge) && "border-primary ring-2 ring-primary/10",
                       )}
                       onClick={() => selectImage(item.id)}
                     >
                       <div className="relative aspect-square w-full p-3">
                         <img
-                          className="h-full w-full object-contain"
+                          className="absolute inset-3 h-[calc(100%-1.5rem)] w-[calc(100%-1.5rem)] rounded-md bg-icon-well object-contain p-1"
                           src={item.src}
                           alt={item.name}
                           loading="lazy"
@@ -678,7 +666,7 @@ function App() {
                             }}
                             className={cn(
                               "rounded-md p-1 shadow-sm transition",
-                              fav ? "bg-amber-400 text-white opacity-100" : "bg-white text-slate-400 hover:text-amber-500",
+                              fav ? "bg-amber-400 text-white opacity-100" : "bg-surface text-muted-foreground hover:text-amber-500",
                             )}
                             title={fav ? "取消收藏" : "收藏"}
                           >
@@ -687,7 +675,7 @@ function App() {
                           {isUserItem && (
                             <button
                               type="button"
-                              className="rounded-md bg-white p-1 text-slate-400 shadow-sm transition hover:text-red-600"
+                              className="rounded-md bg-surface p-1 text-muted-foreground shadow-sm transition hover:text-red-600"
                               onClick={(e) => {
                                 e.stopPropagation()
                                 removeImage(item.id)
@@ -705,7 +693,7 @@ function App() {
                           </div>
                         )}
                       </div>
-                      <div className="truncate border-t border-slate-100 px-2 py-1 text-center text-[11px] font-medium text-slate-700">
+                      <div className="truncate border-t border-border px-2 py-1 text-center text-[11px] font-medium text-foreground">
                         {item.name}
                       </div>
                     </div>
@@ -718,7 +706,7 @@ function App() {
           {/* RIGHT: Composer */}
           <aside className="flex flex-col gap-4">
             <div className="grid gap-2">
-              <span className="text-xs font-medium text-slate-500">用途预设</span>
+              <span className="text-xs font-medium text-muted-foreground">用途预设</span>
               <div className="flex flex-wrap gap-2">
                 {scenes.map((s) => (
                   <button
@@ -728,12 +716,12 @@ function App() {
                     className={cn(
                       "flex flex-1 min-w-[100px] flex-col items-start gap-0.5 rounded-lg border px-3 py-2 text-left transition",
                       activeSceneId === s.id
-                        ? "border-slate-950 bg-slate-950 text-white"
-                        : "border-input bg-white hover:border-slate-400",
+                        ? "border-primary bg-primary text-primary-foreground"
+                        : "border-input bg-surface hover:border-primary/50",
                     )}
                   >
                     <span className="text-sm font-semibold">{s.label}</span>
-                    <span className={cn("text-xs", activeSceneId === s.id ? "text-slate-300" : "text-muted-foreground")}>
+                    <span className={cn("text-xs", activeSceneId === s.id ? "text-primary-foreground/70" : "text-muted-foreground")}>
                       {s.desc}
                     </span>
                   </button>
@@ -750,7 +738,7 @@ function App() {
                 active={activeSlot === "base"}
                 dragOver={dragOverSlot === "base"}
                 onActivate={() => setActiveSlot("base")}
-                onClear={baseImage ? () => setBaseId("") : undefined}
+                onClear={baseImage ? () => clearSlot("base") : undefined}
                 onDragEnter={() => setDragOverSlot("base")}
                 onDragLeave={() => setDragOverSlot(null)}
                 onDrop={(id) => {
@@ -766,7 +754,7 @@ function App() {
                 active={activeSlot === "badge"}
                 dragOver={dragOverSlot === "badge"}
                 onActivate={() => setActiveSlot("badge")}
-                onClear={badgeImage ? () => setBadgeId("") : undefined}
+                onClear={badgeImage ? () => clearSlot("badge") : undefined}
                 onDragEnter={() => setDragOverSlot("badge")}
                 onDragLeave={() => setDragOverSlot(null)}
                 onDrop={(id) => {
@@ -776,14 +764,14 @@ function App() {
               />
             </div>
 
-            <div className="rounded-2xl border border-border bg-white p-4 shadow-soft">
+            <div className="rounded-2xl border border-border bg-surface p-4 shadow-soft">
               <div
                 className="relative mx-auto aspect-square w-full max-w-[420px]"
                 onMouseEnter={() => setHoverCanvas(true)}
                 onMouseLeave={() => setHoverCanvas(false)}
               >
                 <div className={cn("absolute inset-0", baseShape === "circle" ? "rounded-full" : "rounded-xl")} style={baseShape === "circle" ? { clipPath: "circle(50%)" } : undefined}>
-                  <div className="absolute inset-0 rounded-xl border border-dashed border-slate-300 bg-[conic-gradient(from_90deg_at_1px_1px,#e2e8f0_90deg,transparent_0)_0_0/22px_22px]" />
+                  <div className="absolute inset-0 rounded-xl border border-dashed border-input canvas-checker" />
                 </div>
                 <canvas
                   ref={canvasRef}
@@ -821,18 +809,18 @@ function App() {
                 </div>
               )}
               {renderError && (
-                <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
                   {renderError}
                 </div>
               )}
             </div>
 
             <details
-              className="rounded-xl border border-border bg-white shadow-soft"
+              className="rounded-xl border border-border bg-surface shadow-soft"
               open={advancedOpen}
               onToggle={(event) => setAdvancedOpen((event.target as HTMLDetailsElement).open)}
             >
-              <summary className="flex cursor-pointer items-center justify-between px-4 py-3 text-sm font-medium text-slate-700">
+              <summary className="flex cursor-pointer items-center justify-between px-4 py-3 text-sm font-medium text-foreground">
                 <span className="flex items-center gap-2">
                   <Layers className="h-4 w-4" />
                   高级设置
@@ -843,7 +831,7 @@ function App() {
                 <NumberControl label="画布大小" value={outputSize} min={128} max={2048} step={32} unit="px" onChange={setOutputSize} />
                 <NumberControl label="Logo 大小" value={badgeScale} min={12} max={60} step={1} unit="%" onChange={setBadgeScale} />
                 <div className="grid gap-2">
-                  <span className="text-sm font-medium text-slate-700">Logo 位置 · 一键吸附</span>
+                  <span className="text-sm font-medium text-foreground">Logo 位置 · 一键吸附</span>
                   <div className="grid grid-cols-4 gap-2">
                     {(Object.keys(cornerPresets) as CornerKey[]).map((c) => {
                       const p = cornerPresets[c]
@@ -857,7 +845,7 @@ function App() {
                   </div>
                 </div>
                 <div className="grid gap-2">
-                  <span className="text-sm font-medium text-slate-700">底图形状</span>
+                  <span className="text-sm font-medium text-foreground">底图形状</span>
                   <div className="flex gap-1.5">
                     {([
                       { key: "square", label: "方形" },
@@ -871,8 +859,8 @@ function App() {
                         className={cn(
                           "rounded-md border px-2.5 py-1 text-xs font-medium transition",
                           baseShape === opt.key
-                            ? "border-slate-950 bg-slate-950 text-white"
-                            : "border-input bg-white text-slate-600 hover:border-slate-400",
+                            ? "border-primary bg-primary text-primary-foreground"
+                            : "border-input bg-surface text-muted-foreground hover:border-primary/50",
                         )}
                       >
                         {opt.label}
@@ -891,14 +879,14 @@ function App() {
         </div>
 
         <footer className="mt-4 border-t border-border pt-5 text-sm text-muted-foreground">
-          <div className="mb-1 text-slate-700">图标致谢</div>
+          <div className="mb-1 text-foreground">图标致谢</div>
           <p className="leading-relaxed">
             感谢{" "}
             <a
               href="https://github.com/homarr-labs/dashboard-icons"
               target="_blank"
               rel="noopener noreferrer"
-              className="font-medium text-slate-900 underline-offset-2 hover:underline"
+              className="font-medium text-foreground underline-offset-2 hover:underline"
             >
               homarr-labs/dashboard-icons
             </a>
@@ -907,7 +895,7 @@ function App() {
               href="https://github.com/lobehub/lobe-icons"
               target="_blank"
               rel="noopener noreferrer"
-              className="font-medium text-slate-900 underline-offset-2 hover:underline"
+              className="font-medium text-foreground underline-offset-2 hover:underline"
             >
               lobehub/lobe-icons
             </a>
@@ -918,14 +906,14 @@ function App() {
       </div>
 
       {/* Sticky download bar */}
-      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-white/90 px-4 py-3 backdrop-blur sm:px-6">
+      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-surface/90 px-4 py-3 backdrop-blur sm:px-6">
         <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-3">
-          <div className="min-w-0 text-sm text-slate-600">
+          <div className="min-w-0 text-sm text-muted-foreground">
             {baseImage && badgeImage ? (
               <span className="truncate">
-                <span className="font-medium text-slate-950">{baseImage.name}</span>
-                <span className="mx-1 text-slate-400">+</span>
-                <span className="font-medium text-slate-950">{badgeImage.name}</span>
+                <span className="font-medium text-foreground">{baseImage.name}</span>
+                <span className="mx-1 text-muted-foreground">+</span>
+                <span className="font-medium text-foreground">{badgeImage.name}</span>
                 <span className="ml-2 text-xs text-muted-foreground">{outputSize}px</span>
               </span>
             ) : baseImage ? (
@@ -985,23 +973,23 @@ function Slot({
         }
       }}
       className={cn(
-        "relative flex flex-col rounded-xl border bg-white p-3 text-center shadow-soft transition",
+        "relative flex flex-col rounded-xl border bg-surface p-3 text-center shadow-soft transition",
         dragOver
-          ? "border-blue-500 bg-blue-50 ring-4 ring-blue-500/20"
+          ? "border-blue-500 bg-blue-50 dark:bg-blue-950 ring-4 ring-blue-500/20"
           : active
-            ? "border-slate-950 ring-2 ring-slate-950/15"
-            : image ? "border-border hover:border-slate-400" : "border-dashed border-slate-300 hover:border-slate-500",
+            ? "border-primary ring-2 ring-primary/15"
+            : image ? "border-border hover:border-primary/50" : "border-dashed border-input hover:border-primary/60",
       )}
     >
       <div className="absolute left-2 top-2 flex items-center gap-1.5">
-        <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600">{label}</span>
-        {active && <span className="rounded bg-slate-950 px-1.5 py-0.5 text-[10px] font-semibold text-white">填入中</span>}
+        <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">{label}</span>
+        {active && <span className="rounded bg-primary px-1.5 py-0.5 text-[10px] font-semibold text-primary-foreground">填入中</span>}
       </div>
       {onClear && (
         <button
           type="button"
           onClick={onClear}
-          className="absolute right-2 top-2 rounded-md p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+          className="absolute right-2 top-2 rounded-md p-1 text-muted-foreground transition hover:bg-muted hover:text-foreground"
           title="清除"
         >
           <X className="h-3.5 w-3.5" />
@@ -1014,18 +1002,18 @@ function Slot({
       >
         <div className={cn(
           "grid h-16 w-16 shrink-0 place-items-center rounded-lg",
-          image ? "bg-slate-50" : "bg-slate-100",
+          image ? "bg-icon-well" : "bg-muted",
         )}>
           {image ? (
             <img src={image.src} alt={image.name} className="h-14 w-14 object-contain" />
           ) : (
-            <ImagePlus className="h-6 w-6 text-slate-400" />
+            <ImagePlus className="h-6 w-6 text-muted-foreground" />
           )}
         </div>
         {image ? (
-          <div className="w-full truncate text-sm font-semibold text-slate-950">{image.name}</div>
+          <div className="w-full truncate text-sm font-semibold text-foreground">{image.name}</div>
         ) : (
-          <div className="text-xs text-slate-500">{hint}</div>
+          <div className="text-xs text-muted-foreground">{hint}</div>
         )}
       </button>
     </div>
@@ -1033,14 +1021,14 @@ function Slot({
 }
 
 function Pill({ children }: { children: ReactNode }) {
-  return <span className="rounded bg-slate-950 px-1.5 py-0.5 text-[10px] font-semibold text-white">{children}</span>
+  return <span className="rounded bg-primary px-1.5 py-0.5 text-[10px] font-semibold text-primary-foreground">{children}</span>
 }
 
 function ToggleRow({ label, value, onChange }: { label: string; value: boolean; onChange: (v: boolean) => void }) {
   return (
-    <label className="flex items-center justify-between rounded-md border border-input px-3 py-2 text-sm font-medium text-slate-700">
+    <label className="flex items-center justify-between rounded-md border border-input px-3 py-2 text-sm font-medium text-foreground">
       {label}
-      <input className="h-4 w-4 accent-slate-950" type="checkbox" checked={value} onChange={(e) => onChange(e.target.checked)} />
+      <input className="h-4 w-4 accent-primary" type="checkbox" checked={value} onChange={(e) => onChange(e.target.checked)} />
     </label>
   )
 }
@@ -1056,7 +1044,7 @@ function NumberControl({
   }
   return (
     <div className="grid gap-2">
-      <div className="flex items-center justify-between text-sm font-medium text-slate-700">
+      <div className="flex items-center justify-between text-sm font-medium text-foreground">
         <span>{label}</span>
         <div className="flex items-center gap-1">
           <input
@@ -1072,7 +1060,7 @@ function NumberControl({
         </div>
       </div>
       <input
-        className="w-full accent-slate-950"
+        className="w-full accent-primary"
         type="range"
         min={min}
         max={max}
@@ -1082,6 +1070,16 @@ function NumberControl({
       />
     </div>
   )
+}
+
+function clampBadgePosition(pos: { x: number; y: number }, shape: BaseShape, scale: number) {
+  if (shape !== "circle") return pos
+  const maxR = 50 - scale / 2
+  if (maxR <= 0) return { x: 50, y: 50 }
+  const dx = pos.x - 50, dy = pos.y - 50
+  const dist = Math.hypot(dx, dy)
+  if (dist <= maxR) return pos
+  return { x: 50 + dx * maxR / dist, y: 50 + dy * maxR / dist }
 }
 
 function loadImage(src: string, fallback?: string) {

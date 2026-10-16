@@ -64,7 +64,7 @@ export function VisitCount() {
           href={UMAMI_DASHBOARD}
           target="_blank"
           rel="noopener noreferrer"
-          className="font-medium text-slate-700 underline-offset-2 hover:text-slate-950 hover:underline"
+          className="font-medium text-foreground underline-offset-2 hover:text-foreground hover:underline"
         >
           Umami 控制台
         </a>
