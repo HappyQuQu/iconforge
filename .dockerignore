@@ -1,0 +1,10 @@
+.git
+.claude
+node_modules
+dist
+docs
+.env
+.env.*
+.dev.vars
+*.log
+.DS_Store

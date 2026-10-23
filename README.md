@@ -41,9 +41,12 @@
 
 ## 本地开发
 
-需要 Node.js **20.19+（20.x）或 22.12+**，以及 [pnpm](https://pnpm.io/)。
+统一使用 Node.js **24 LTS**，当前固定为 **24.22.1**，包管理器使用 [pnpm](https://pnpm.io/) **10.33.0**。`.nvmrc` 与 `.node-version` 记录相同版本。
 
 ```bash
+nvm install     # 已安装 nvm 时，安装 .nvmrc 中指定的 Node.js
+nvm use
+corepack enable
 pnpm install
 pnpm dev        # 启动开发服务器，以终端显示的地址为准
 pnpm build      # TypeScript 检查 + 生产构建，输出到 dist/
@@ -53,12 +56,25 @@ pnpm lint       # ESLint 检查
 
 核心合成功能无需环境变量。访问统计配置见 [.env.example](.env.example)；`functions/api/stats.js` 是可选的 Cloudflare Pages 统计代理，API 密钥应放在服务端环境中。
 
+## Docker 部署
+
+Docker 构建阶段同样使用 `node:24.22.1-bookworm-slim`，执行依赖安装、lint 和生产构建；运行阶段由 Nginx 提供静态页面。
+
+```bash
+docker build --pull -t iconforge:local .
+docker run --rm -p 8080:80 iconforge:local
+```
+
+打开 [localhost:8080](http://localhost:8080)。此镜像提供静态合成功能；可选的 `/api/stats` 统计代理需单独部署在 Cloudflare Pages 等服务端环境。
+
 ## 技术与结构
 
 React 19 · TypeScript · Vite 8 · Tailwind CSS · Lucide · Canvas API
 
 ```text
 iconforge/
+├── Dockerfile                    # Node.js 24 LTS 构建 + Nginx 静态服务
+├── .nvmrc / .node-version        # 本地 Node.js 版本
 ├── docs/screenshots/             # README 中的实际界面截图
 ├── functions/api/                # 可选的访问统计代理
 ├── public/                       # 网站图标等静态资源
